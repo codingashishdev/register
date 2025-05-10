@@ -27,11 +27,19 @@ const optionalRedirectConfigFields = {
     redirect_paths: "boolean"
 };
 
+const blockedFields = [
+    "domain",
+    "internal",
+    "reserved",
+    "subdomain"
+];
+
 const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 const hostnameRegex = /^(?=.{1,253}$)(?:(?:[_a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)\.)+[a-zA-Z]{2,63}$/;
 
-const excludedDomains = require("../util/excluded.json");
+const internalDomains = require("../util/internal.json");
 const reservedDomains = require("../util/reserved.json");
+
 const domainsPath = path.resolve("domains");
 const files = fs.readdirSync(domainsPath);
 
@@ -84,7 +92,7 @@ async function validateFields(t, obj, fields, file, prefix = "") {
 
         if (obj.hasOwnProperty(key)) {
             t.is(typeof obj[key], fields[key], `${file}: Field ${fieldPath} should be of type ${fields[key]}`);
-        } else if (fields === requiredFields) {
+        } else if (fields === requiredFields || fields === requiredOwnerFields) {
             t.true(false, `${file}: Missing required field: ${fieldPath}`);
         }
     }
@@ -103,17 +111,19 @@ async function validateFileName(t, file) {
         hostnameRegex,
         `${file}: FQDN must be 1-253 characters, can use letters, numbers, dots, and non-consecutive hyphens.`
     );
+    t.false(internalDomains.includes(subdomain), `${file}: Subdomain name is registered internally`);
     t.false(reservedDomains.includes(subdomain), `${file}: Subdomain name is reserved`);
     t.true(
-        !reservedDomains.some((reserved) => subdomain.endsWith(`.${reserved}`)),
+        !internalDomains.some((i) => subdomain.endsWith(`.${i}`)),
+        `${file}: Subdomain name is registered internally`
+    );
+    t.true(
+        !reservedDomains.some((r) => subdomain.endsWith(`.${r}`)),
         `${file}: Subdomain name is reserved`
     );
 
     const rootSubdomain = subdomain.split(".").pop();
-
-    if (!excludedDomains.includes(rootSubdomain)) {
-        t.false(rootSubdomain.startsWith("_"), `${file}: Root subdomains should not start with an underscore`);
-    }
+    t.false(rootSubdomain.startsWith("_"), `${file}: Root subdomains should not start with an underscore`);
 }
 
 async function processFile(file, t) {
@@ -122,15 +132,16 @@ async function processFile(file, t) {
 
     validateFileName(t, file);
 
-    // Validate fields and duplicates
+    // Check for duplicate keys
+    const rawData = await fs.readFile(filePath, "utf8");
+    const duplicateKeys = findDuplicateKeys(rawData);
+    t.true(!duplicateKeys.length, `${file}: Duplicate keys found: ${duplicateKeys.join(", ")}`);
+
+    // Validate fields
     validateFields(t, data, requiredFields, file);
     validateFields(t, data.owner, requiredOwnerFields, file, "owner");
     validateFields(t, data.owner, optionalOwnerFields, file, "owner");
     validateFields(t, data, optionalFields, file);
-
-    if (data.redirect_config) {
-        validateFields(t, data.redirect_config, optionalRedirectConfigFields, file, "redirect_config");
-    }
 
     if (data.owner.email) {
         t.regex(data.owner.email, emailRegex, `${file}: Owner email should be a valid email address`);
@@ -142,10 +153,13 @@ async function processFile(file, t) {
 
     t.true(Object.keys(data.records).length > 0, `${file}: Missing DNS records`);
 
-    // Check for duplicate keys
-    const rawData = await fs.readFile(filePath, "utf8");
-    const duplicateKeys = findDuplicateKeys(rawData);
-    t.true(!duplicateKeys.length, `${file}: Duplicate keys found: ${duplicateKeys.join(", ")}`);
+    if (data.redirect_config) {
+        validateFields(t, data.redirect_config, optionalRedirectConfigFields, file, "redirect_config");
+    }
+
+    for (const field of blockedFields) {
+        t.true(!data.hasOwnProperty(field), `${file}: Disallowed field: ${field}`);
+    }
 }
 
 t("JSON files should not be in the root directory", (t) => {

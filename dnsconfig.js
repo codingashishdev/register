@@ -1,6 +1,6 @@
 var domainName = "is-a.dev";
 var registrar = NewRegistrar("none");
-var dnsProvider = DnsProvider(NewDnsProvider("cloudflare"), 0);
+var dnsProvider = DnsProvider(NewDnsProvider("cloudflare"));
 
 function getDomainsList(filesPath) {
     var result = [];
@@ -141,27 +141,27 @@ var reserved = require("./util/reserved.json");
 for (var i = 0; i < reserved.length; i++) {
     var subdomainName = reserved[i];
     if (
-        subdomainName !== "autoconfig" &&
-        subdomainName !== "autodiscover" &&
+        subdomainName !== "data" &&
+        subdomainName !== "docs" &&
         subdomainName !== "ns1" &&
         subdomainName !== "ns2" &&
         subdomainName !== "ns3" &&
         subdomainName !== "ns4" &&
+        subdomainName !== "raw" &&
         subdomainName !== "www"
     ) {
         records.push(A(subdomainName, IP("192.0.2.1"), CF_PROXY_ON));
     }
 }
 
-var options = {
-    no_ns: "true"
-};
+// Zone last updated TXT record
+records.push(TXT("_zone-updated", "\"" + Date.now().toString() + "\""));
 
 var ignored = [
+    IGNORE("\\*", "A"),
     IGNORE("*._domainkey", "TXT"),
     IGNORE("@", "*"),
     IGNORE("_acme-challenge", "TXT"),
-    IGNORE("_autodiscover._tcp", "SRV"),
     IGNORE("_discord", "TXT"),
     IGNORE("_dmarc", "TXT"),
     IGNORE("_gh-is-a-dev-o", "TXT"),
@@ -169,13 +169,13 @@ var ignored = [
     IGNORE("_github-pages-challenge-is-a-dev", "TXT"),
     IGNORE("_github-pages-challenge-is-a-dev.**", "TXT"),
     IGNORE("_psl", "TXT"),
-    IGNORE("autoconfig", "CNAME"),
-    IGNORE("autodiscover", "CNAME"),
-    IGNORE("ns[1-4]", "A,AAAA"),
-    IGNORE("www", "*")
+    IGNORE("ns[1-4]", "A,AAAA")
 ];
 
-// Push TXT record of when the zone was last updated
-records.push(TXT("_zone-updated", "\"" + Date.now().toString() + "\""));
+var internal = require("./util/internal.json");
 
-D(domainName, registrar, dnsProvider, options, ignored, records);
+internal.forEach(function(subdomain) {
+    ignored.push(IGNORE(subdomain, "*"));
+});
+
+D(domainName, registrar, dnsProvider, records, ignored);
